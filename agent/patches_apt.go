@@ -22,13 +22,10 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	rmm "github.com/amidaware/rmmagent/shared"
 )
 
-// Debian based patching (#2556). Pending upgrades go through the same API as
-// Windows updates: the guid is "package=version" so every version is approved
-// and tracked on its own. The severity comes from the repository, see classify.
+// Debian based patching (#2556), see patches_unix.go for the shared flow.
+// The severity comes from the repository, see classify.
 
 type aptUpgrade struct {
 	Pkg, From, To, Origin string
@@ -120,94 +117,46 @@ func (a *Agent) aptPendingUpgrades() ([]aptUpgrade, error) {
 	return parseAptSimulate(out), nil
 }
 
-func (a *Agent) GetWinUpdates() {
-	if !aptAvailable() {
-		return
-	}
+// aptPatcher implements patcher for Debian based systems
+type aptPatcher struct{ a *Agent }
 
-	upgrades, err := a.aptPendingUpgrades()
+func (p aptPatcher) pending() ([]pkgUpgrade, error) {
+	upgrades, err := p.a.aptPendingUpgrades()
 	if err != nil {
-		a.Logger.Errorln(err)
-		return
+		return nil, err
 	}
-
-	updates := make([]rmm.WUAPackage, 0, len(upgrades))
+	ret := make([]pkgUpgrade, 0, len(upgrades))
 	for _, u := range upgrades {
 		severity, category := u.classify()
-		updates = append(updates, rmm.WUAPackage{
-			Title:        fmt.Sprintf("%s %s -> %s", u.Pkg, u.From, u.To),
-			Description:  u.Origin,
-			Categories:   []string{category},
-			CategoryIDs:  []string{},
-			KBArticleIDs: []string{},
-			MoreInfoURLs: []string{},
-			UpdateID:     u.guid(),
-			Severity:     severity,
+		ret = append(ret, pkgUpgrade{
+			Pkg: u.Pkg, From: u.From, To: u.To,
+			Severity: severity, Category: category, Description: u.Origin,
 		})
 	}
-
-	payload := rmm.WinUpdateResult{AgentID: a.AgentID, Updates: updates}
-	if _, err := a.rClient.R().SetBody(payload).Post("/api/v3/winupdates/"); err != nil {
-		a.Logger.Debugln(err)
-	}
+	return ret, nil
 }
 
-func (a *Agent) InstallUpdates(guids []string) {
-	if !aptAvailable() {
-		return
+// install pins the approved versions (package=version)
+func (p aptPatcher) install(guids []string) error {
+	args := append([]string{
+		"-y", "-q",
+		"-o", "Dpkg::Options::=--force-confdef",
+		"-o", "Dpkg::Options::=--force-confold",
+		"install", "--only-upgrade",
+	}, guids...)
+	if out, err := aptGet(time.Hour, args...); err != nil {
+		return fmt.Errorf("apt-get install: %w: %s", err, out)
 	}
+	return nil
+}
 
-	upgrades, err := a.aptPendingUpgrades()
-	if err != nil {
-		a.Logger.Errorln(err)
-		return
-	}
-	candidates := make(map[string]bool, len(upgrades))
-	for _, u := range upgrades {
-		candidates[u.guid()] = true
-	}
-
-	// a newer version replaced the approved one since the scan
-	install := make([]string, 0, len(guids))
-	for _, guid := range guids {
-		if candidates[guid] {
-			install = append(install, guid)
-			continue
-		}
-		superseded := rmm.SupersededUpdate{AgentID: a.AgentID, UpdateID: guid}
-		a.rClient.R().SetBody(superseded).Post("/api/v3/superseded/")
-	}
-
-	if len(install) > 0 {
-		args := append([]string{
-			"-y", "-q",
-			"-o", "Dpkg::Options::=--force-confdef",
-			"-o", "Dpkg::Options::=--force-confold",
-			"install", "--only-upgrade",
-		}, install...)
-		if out, err := aptGet(time.Hour, args...); err != nil {
-			a.Logger.Errorln("apt-get install:", err, out)
-		}
-
-		// report per package, a failed batch may still have installed some
-		for _, guid := range install {
-			pkg, ver, _ := strings.Cut(guid, "=")
-			out, _ := exec.Command("dpkg-query", "-W", "-f", "${Version}", pkg).Output()
-			result := rmm.WinUpdateInstallResult{
-				AgentID:  a.AgentID,
-				UpdateID: guid,
-				Success:  strings.TrimSpace(string(out)) == ver,
-			}
-			a.rClient.R().SetBody(result).Patch("/api/v3/winupdates/")
+func (p aptPatcher) installedVersions() map[string]string {
+	out, _ := exec.Command("dpkg-query", "-W", "-f", "${Package}\t${Version}\n").Output()
+	ret := make(map[string]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		if pkg, ver, ok := strings.Cut(line, "\t"); ok {
+			ret[pkg] = ver
 		}
 	}
-
-	needsReboot, err := a.SystemRebootRequired()
-	if err != nil {
-		a.Logger.Errorln(err)
-	}
-	rebootPayload := rmm.AgentNeedsReboot{AgentID: a.AgentID, NeedsReboot: needsReboot}
-	if _, err := a.rClient.R().SetBody(rebootPayload).Put("/api/v3/winupdates/"); err != nil {
-		a.Logger.Debugln("NeedsReboot:", err)
-	}
+	return ret
 }

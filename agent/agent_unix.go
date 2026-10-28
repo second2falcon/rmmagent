@@ -87,6 +87,10 @@ func (a *Agent) SystemRebootRequired() (bool, error) {
 			return true, nil
 		}
 	}
+	// alpine
+	if kernelModulesMissing() {
+		return true, nil
+	}
 	// rhel
 	bins := [2]string{"/usr/bin/needs-restarting", "/bin/needs-restarting"}
 	for _, bin := range bins {
