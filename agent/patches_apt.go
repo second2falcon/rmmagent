@@ -28,7 +28,7 @@ import (
 
 // Debian based patching (#2556). Pending upgrades go through the same API as
 // Windows updates: the guid is "package=version" so every version is approved
-// and tracked on its own, and security updates map to the Critical severity.
+// and tracked on its own. The severity comes from the repository, see classify.
 
 type aptUpgrade struct {
 	Pkg, From, To, Origin string
@@ -36,8 +36,46 @@ type aptUpgrade struct {
 
 func (u aptUpgrade) guid() string { return u.Pkg + "=" + u.To }
 
-func (u aptUpgrade) security() bool {
-	return strings.Contains(strings.ToLower(u.Origin), "security")
+// origins of Debian and derived distributions, anything else is third party
+var aptDistroOrigins = map[string]bool{
+	"debian": true, "debian-security": true, "debian backports": true, "ubuntu": true, "raspbian": true,
+	"raspberry pi foundation": true, "devuan": true, "linuxmint": true,
+	"kali": true, "proxmox": true,
+}
+
+// classify maps the repository of an upgrade to a patch policy severity:
+// security Critical, distro updates Important, backports Moderate, third
+// party repos Low, unrecognised Other. With several repos the highest wins.
+func (u aptUpgrade) classify() (severity, category string) {
+	type level struct {
+		rank               int
+		severity, category string
+	}
+	best := level{0, "", "Other"}
+	// e.g. "Debian:12.8/stable, Debian-Security:12/stable-security"
+	for _, entry := range strings.Split(u.Origin, ",") {
+		entry = strings.ToLower(strings.TrimSpace(entry))
+		origin, rest, ok := strings.Cut(entry, ":")
+		slash := strings.LastIndex(rest, "/")
+		if !ok || slash == -1 {
+			continue
+		}
+		archive := rest[slash+1:]
+
+		l := level{1, "Low", "Third-party"}
+		switch {
+		case strings.Contains(archive, "security"):
+			l = level{4, "Critical", "Security Updates"}
+		case aptDistroOrigins[origin] && strings.HasSuffix(archive, "-backports"):
+			l = level{2, "Moderate", "Backports"}
+		case aptDistroOrigins[origin]:
+			l = level{3, "Important", "Updates"}
+		}
+		if l.rank > best.rank {
+			best = l
+		}
+	}
+	return best.severity, best.category
 }
 
 // e.g. Inst openssl [3.0.2-0ubuntu1.14] (3.0.2-0ubuntu1.15 Ubuntu:22.04/jammy-security [amd64])
@@ -95,10 +133,7 @@ func (a *Agent) GetWinUpdates() {
 
 	updates := make([]rmm.WUAPackage, 0, len(upgrades))
 	for _, u := range upgrades {
-		severity, category := "", "Updates"
-		if u.security() {
-			severity, category = "Critical", "Security Updates"
-		}
+		severity, category := u.classify()
 		updates = append(updates, rmm.WUAPackage{
 			Title:        fmt.Sprintf("%s %s -> %s", u.Pkg, u.From, u.To),
 			Description:  u.Origin,

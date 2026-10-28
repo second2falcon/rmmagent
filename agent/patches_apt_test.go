@@ -22,17 +22,40 @@ Conf libssl3 (3.0.2-0ubuntu1.15 Ubuntu:22.04/jammy-security [amd64])
 	}
 
 	want := []struct {
-		guid     string
-		from     string
-		security bool
+		guid string
+		from string
 	}{
-		{"libssl3=3.0.2-0ubuntu1.15", "3.0.2-0ubuntu1.14", true},
-		{"openssl=3.0.15-1~deb12u1", "3.0.11-1~deb12u1", true},
-		{"tzdata=2024b-0+deb12u1", "2024a-0+deb12u1", false},
+		{"libssl3=3.0.2-0ubuntu1.15", "3.0.2-0ubuntu1.14"},
+		{"openssl=3.0.15-1~deb12u1", "3.0.11-1~deb12u1"},
+		{"tzdata=2024b-0+deb12u1", "2024a-0+deb12u1"},
 	}
 	for i, w := range want {
-		if got[i].guid() != w.guid || got[i].From != w.from || got[i].security() != w.security {
+		if got[i].guid() != w.guid || got[i].From != w.from {
 			t.Errorf("upgrade %d = %+v (guid %s), want %+v", i, got[i], got[i].guid(), w)
+		}
+	}
+}
+
+func TestAptClassify(t *testing.T) {
+	cases := map[string]string{
+		"Ubuntu:24.04/noble-updates, Ubuntu:24.04/noble-security": "Critical",
+		"Debian:12.8/stable, Debian-Security:12/stable-security":  "Critical",
+		"Debian:12.8/stable":                                       "Important",
+		"Debian:12.8/stable-updates":                               "Important",
+		"Ubuntu:24.04/noble-updates":                               "Important",
+		"Debian Backports:bookworm-backports/bookworm-backports":   "Moderate",
+		"Debian:bookworm-backports/bookworm-backports":             "Moderate",
+		"Ubuntu:24.04/noble-backports":                             "Moderate",
+		"Ubuntu:24.04/noble-backports, Ubuntu:24.04/noble-updates": "Important",
+		"Docker:/noble":                                            "Low",
+		"LP-PPA-ondrej-php:24.04/noble":                            "Low",
+		"Proxmox:bookworm/stable":                                  "Important",
+		"localhost":                                                "",
+		"":                                                         "",
+	}
+	for origin, want := range cases {
+		if got, _ := (aptUpgrade{Origin: origin}).classify(); got != want {
+			t.Errorf("classify(%q) = %q, want %q", origin, got, want)
 		}
 	}
 }
