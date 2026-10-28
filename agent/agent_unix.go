@@ -963,7 +963,12 @@ func (a *Agent) EditService(name, startupType string) rmm.WinSvcResp {
 	return rmm.WinSvcResp{Success: false, ErrorMsg: "/na"}
 }
 
-func (a *Agent) GetInstalledSoftware() []trmm.WinSoftwareList { return dpkgInstalledSoftware() }
+func (a *Agent) GetInstalledSoftware() []trmm.WinSoftwareList {
+	if sw := dpkgInstalledSoftware(); len(sw) > 0 {
+		return sw
+	}
+	return apkInstalledSoftware()
+}
 
 func (a *Agent) ChecksRunning() bool { return false }
 
