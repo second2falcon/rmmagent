@@ -28,7 +28,7 @@ import (
 
 // Debian based patching (#2556). Pending upgrades go through the same API as
 // Windows updates: the guid is "package=version" so every version is approved
-// and tracked on its own, and security updates map to the Important severity.
+// and tracked on its own, and security updates map to the Critical severity.
 
 type aptUpgrade struct {
 	Pkg, From, To, Origin string
@@ -97,7 +97,7 @@ func (a *Agent) GetWinUpdates() {
 	for _, u := range upgrades {
 		severity, category := "", "Updates"
 		if u.security() {
-			severity, category = "Important", "Security Updates"
+			severity, category = "Critical", "Security Updates"
 		}
 		updates = append(updates, rmm.WUAPackage{
 			Title:        fmt.Sprintf("%s %s -> %s", u.Pkg, u.From, u.To),
