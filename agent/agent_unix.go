@@ -359,7 +359,7 @@ func (a *Agent) AgentUpdate(url, inno, version string) error {
 	opts.Detached = true
 	switch runtime.GOOS {
 	case "linux":
-		opts.Command = "systemctl restart tacticalagent.service"
+		opts.Command = restartServiceCmd("tacticalagent")
 	case "darwin":
 		opts.Command = "launchctl kickstart -k system/tacticalagent"
 	default:
@@ -432,13 +432,21 @@ func (a *Agent) getMeshNodeID() (string, error) {
 	return a.NixMeshNodeID(), nil
 }
 
+// restartServiceCmd restarts a service with OpenRC (Alpine) or systemd
+func restartServiceCmd(name string) string {
+	if trmm.FileExists("/sbin/openrc-run") {
+		return fmt.Sprintf("rc-service %s restart", name)
+	}
+	return fmt.Sprintf("systemctl restart %s.service", name)
+}
+
 func (a *Agent) RecoverMesh() {
 	a.Logger.Infoln("Attempting mesh recovery")
 	opts := a.NewCMDOpts()
 	def := "systemctl restart meshagent.service"
 	switch runtime.GOOS {
 	case "linux":
-		opts.Command = def
+		opts.Command = restartServiceCmd("meshagent")
 	case "darwin":
 		opts.Command = "launchctl kickstart -k system/meshagent"
 	default:
