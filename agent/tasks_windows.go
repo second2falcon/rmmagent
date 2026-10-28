@@ -56,6 +56,8 @@ type SchedTask struct {
 	RunASAPAfterMissed  bool                           `json:"start_when_available"`
 	DeleteAfter         bool                           `json:"delete_expired_task_after"`
 	Overwrite           bool                           `json:"overwrite_task"`
+	RebootDelay         int                            `json:"reboot_delay"`
+	RebootMessage       string                         `json:"reboot_message"`
 }
 
 func (a *Agent) CreateSchedTask(st SchedTask) (bool, error) {
@@ -154,7 +156,15 @@ func (a *Agent) CreateSchedTask(st SchedTask) (bool, error) {
 	case "schedreboot":
 		path = "shutdown.exe"
 		workdir = filepath.Join(os.Getenv("SYSTEMROOT"), "System32")
-		args = "/r /t 5 /f"
+		// 5s floor keeps the old default for servers that don't send a delay
+		delay := 5
+		if st.RebootDelay > delay {
+			delay = st.RebootDelay
+		}
+		args = fmt.Sprintf("/r /t %d /f", delay)
+		if msg := sanitizeShutdownMsg(st.RebootMessage); msg != "" {
+			args += fmt.Sprintf(` /c "%s"`, msg)
+		}
 	case "custom":
 		path = st.Path
 		workdir = st.WorkDir
@@ -250,4 +260,15 @@ func ListSchedTasks() []string {
 	}
 	tasks.Release()
 	return ret
+}
+
+// sanitizeShutdownMsg makes a message safe to embed as a quoted shutdown.exe /c
+// argument: no quotes or line breaks, capped at shutdown's 512 char limit
+func sanitizeShutdownMsg(msg string) string {
+	msg = strings.NewReplacer(`"`, "'", "\r", " ", "\n", " ").Replace(msg)
+	msg = strings.TrimRight(strings.TrimSpace(msg), `\`)
+	if r := []rune(msg); len(r) > 512 {
+		msg = strings.TrimRight(string(r[:512]), `\`)
+	}
+	return msg
 }
