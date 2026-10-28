@@ -911,7 +911,17 @@ func (a *Agent) GetAgentCheckInConfig(ret AgentCheckInConfig) AgentCheckInConfig
 // windows only below TODO add into stub file
 func (a *Agent) PlatVer() (string, error) { return "", nil }
 
-func (a *Agent) SendSoftware() {}
+func (a *Agent) SendSoftware() {
+	sw := a.GetInstalledSoftware()
+	if len(sw) == 0 {
+		return
+	}
+
+	payload := map[string]interface{}{"agent_id": a.AgentID, "software": sw}
+	if _, err := a.rClient.R().SetBody(payload).Post("/api/v3/software/"); err != nil {
+		a.Logger.Debugln(err)
+	}
+}
 
 func (a *Agent) UninstallCleanup() {}
 
@@ -945,7 +955,7 @@ func (a *Agent) EditService(name, startupType string) rmm.WinSvcResp {
 	return rmm.WinSvcResp{Success: false, ErrorMsg: "/na"}
 }
 
-func (a *Agent) GetInstalledSoftware() []trmm.WinSoftwareList { return []trmm.WinSoftwareList{} }
+func (a *Agent) GetInstalledSoftware() []trmm.WinSoftwareList { return dpkgInstalledSoftware() }
 
 func (a *Agent) ChecksRunning() bool { return false }
 
