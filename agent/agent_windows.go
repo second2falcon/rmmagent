@@ -118,6 +118,12 @@ func (a *Agent) RunScript(code string, shell string, args []string, timeout int,
 	switch shell {
 	case "powershell":
 		ext = "*.ps1"
+		// Windows PowerShell 5.1 reads BOM-less .ps1 files as ANSI, which mangles
+		// non-ASCII chars (an em-dash ends in 0x94, a closing quote in cp1252)
+		bom := []byte{0xEF, 0xBB, 0xBF}
+		if !bytes.HasPrefix(content, bom) {
+			content = append(bom, content...)
+		}
 	case "python":
 		ext = "*.py"
 	case "cmd":
